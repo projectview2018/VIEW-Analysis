@@ -1,0 +1,367 @@
+---
+title: "City of Boston: Market Analysis Version 1"
+author: "Alessandra Vennema and Lily Slonim" 
+date: "Last Updated: September, 2022" 
+output: html_notebook
+---
+
+
+# Data Wrangling: Install packages and load to session 
+# Can be commented out after completing once 
+
+
+```{r Install & Load Packages, echo=FALSE, message=FALSE, warning=FALSE}
+
+ #install.packages("tidyverse")
+ #install.packages("sf")
+ #install.packages("lubridate")
+ #install.packages("ggpubr")
+ #install.packages("viridis")
+ #install.packages("scales")
+ #install.packages("gapminder")
+ #install.packages("tidycensus")
+ #install.packages("fabricatr")
+ #install.packages("httr")
+ #install.packages("tufte")
+ #install.packages("jsonlite")
+ #install.packages("stringr")
+ #install.packages("RSocrata")
+ #install.packages("readr")
+ #install.packages("plotly")
+ #install.packages("rsconnect")
+ #install.packages("flexdashboard")
+ #install.packages("hablar")
+ #install.packages("RColorBrewer")
+ #install.packages("tmap")
+ #install.packages("ggplot2")
+ #install.packages("forcats")
+ #install.packages("dplyr")
+ #install.packages("tidyjson")
+ #install.packages("jsonlite")
+
+
+library(tidyverse)
+library(sf)
+library(lubridate)
+library(ggpubr)
+library(viridis)
+library(scales)
+library(gapminder)
+library(tidycensus)
+library(fabricatr)
+library(httr)
+library(tufte)
+library(jsonlite)
+library(stringr)
+library(RSocrata)
+library(readr)
+library(plotly)
+library(rsconnect)
+library(flexdashboard)
+library(hablar)
+library(RColorBrewer)
+library(tmap)
+library(ggplot2)
+library(magrittr)
+library(forcats)
+library(dplyr)
+library(tidyjson)
+library(jsonlite)
+
+```
+
+
+```{r Upload Airtable Data, message=FALSE, warning=FALSE}
+
+airtable_database <- read.csv("./Data/Vehicles-Grid view.csv") %>% dplyr::filter(!(Phis.and.NVPS.json=="")) #removes blank values for column 
+
+```
+
+
+# Calculating Nearest Visible Point (NVP) for Side & Front Visibility  
+
+
+```{r NVPS Loop Straight Ahead, message=FALSE, warning=FALSE}
+z <- 1 #setting an indexing variable. This helps keep track of the list location 
+
+ID_NVP_Straight <- data.frame('ID'=NA, 'NVP_90_straight'=NA)  #Creates a date frame where we input data for the for loop. 
+
+for (w in airtable_database$ID) { #w refers to the item in the list. Since this is a for loop, it automatically iterates.  
+  
+  try(
+    jsontodf <- fromJSON(airtable_database$Phis.and.NVPS.json[z]) %>% as.data.frame, #For each vehicle, converts JSON object into a data frame. 
+    silent = TRUE
+  )
+  
+  if (exists("jsontodf")){ #Some entries did not have phis and NVPs. 
+    
+    y <- jsontodf$nvps[jsontodf$phi==90] #finds the NVP at 90 (straight ahead of driver), or whatever degree you put here. 
+     
+    if (is_empty(y)){ #puts an NA if there are no value at the degree 
+      
+      y <- NA 
+      
+    } 
+    
+    ID_NVP_Straight[nrow(ID_NVP_Straight) + 1,] = c(w,y) #this adds a new row to the new data frame that contains the NVP and the ID
+    rm(jsontodf) #need to delete the JSON every time because it is a full data frame 
+    z = z + 1 #indexes within the airtable object 
+  } else {
+    ID_NVP_Straight[nrow(ID_NVP_Straight) + 1,] = c(w,NA) #checking to see if the JSON is detected if there will be an NA 
+    rm(jsontodf)
+    z = z + 1
+  }
+}
+rm(w,x,y,z)#removes temp vars 
+
+ID_NVP_Straight <- ID_NVP_Straight[2:nrow(ID_NVP_Straight),] #removes first row with NAs that we created in row 96
+
+```
+
+
+```{r NVPS Loop Passenger, message=FALSE, warning=FALSE}
+
+#same loop as the chunk 'NVPS Loop Straight Ahead, but this gets calculated at 0 degrees
+
+z <- 1
+
+ID_NVP_Passenger <- data.frame('ID'=NA, 'NVP_0_passenger'=NA) #the 0 degree in the app refers to the passenger window. this is calculating the side visibility 
+
+for (w in airtable_database$ID) {
+  
+  try(
+    jsontodf <- fromJSON(airtable_database$Phis.and.NVPS.json[z]) %>% as.data.frame,
+    silent = TRUE
+  )
+  
+  if (exists("jsontodf")){
+    
+    y <- jsontodf$nvps[jsontodf$phi==0]
+    
+    if (is_empty(y)){
+      
+      y <- NA
+      
+    }
+    
+    ID_NVP_Passenger[nrow(ID_NVP_Passenger) + 1,] = c(w,y)
+    rm(jsontodf)
+    z = z + 1
+  } else {
+    ID_NVP_Passenger[nrow(ID_NVP_Passenger) + 1,] = c(w,NA)
+    rm(jsontodf)
+    z = z + 1
+  }
+}
+rm(w,x,y,z)
+
+ID_NVP_Passenger <- ID_NVP_Passenger[2:nrow(ID_NVP_Passenger),]
+
+```
+
+
+```{r NVPS-Airtable Join}
+
+
+Airtable_NVPS_Join_Straight <- inner_join(airtable_database, ID_NVP_Straight, by = "ID") 
+
+
+Airtable_NVPS_Join_Passenger <- inner_join(airtable_database, ID_NVP_Passenger, by = "ID") 
+
+
+```
+
+
+```{r VRU Heights}
+
+#this defines the height of all VRUs for the market analysis. Measurements were taken from the VIEW app 
+
+VRU_GradeSchoolChild_Height_in <- 37 
+
+VRU_Adult_Height_in <- 49 
+
+VRU_Wheelchair_Height_in <- 39 
+
+VRU_GradeSchoolChild_Biker_Height_in <- 35 
+
+VRU_Adult_Biker_Height_in <- 47
+
+VRU_Adult_Scooter_Height_in <- 55 # assuming an avg deck height of 6 inches 
+
+```
+
+#Crosswalk Calculations 
+```{r Distance to Grade School, message=FALSE, warning=FALSE}
+
+# To calculate the distance to the VRU from the front of the cab we make a similar triangle  calculation. 
+
+#Variables: height of VRU, a (drivers eye point to ground), d (driver to front of the cab), NVP directly in front of the driver. 
+
+#First, we subtract a from VRU Height (this produces the opposite side of the small triangle). Then, we divide the product by a/NVP (this produces the adjacent side of the small triangle). Lastly, we subtract d because we are interested in the distance from the car to the VRU 
+
+Airtable_NVPS_Join_Straight <- Airtable_NVPS_Join_Straight %>% mutate(dist_child_in = ((a-VRU_GradeSchoolChild_Height_in)/(a/NVP_90_straight))-Airtable_NVPS_Join_Straight$d)
+
+
+#converts output above into feet 
+Airtable_NVPS_Join_Straight <- Airtable_NVPS_Join_Straight %>% mutate(dist_child_ft = dist_child_in/12) 
+
+
+```
+
+
+```{r Distance to Wheelchair, message=FALSE, warning=FALSE}
+
+# To calculate the distance to the VRU from the front of the cab we make a similar triangle  calculation. 
+
+#Variables: height of VRU, a (drivers eye point to ground), d (driver to front of the cab), NVP directly in front of the driver. 
+
+#First, we subtract a from VRU Height (this produces the opposite side of the small triangle). Then, we divide the product by a/NVP (this produces the adjacent side of the small triangle). Lastly, we subtract d because we are interested in the distance from the car to the VRU 
+
+Airtable_NVPS_Join_Straight <- Airtable_NVPS_Join_Straight %>% mutate(dist_wheelchair_in = ((a-VRU_Wheelchair_Height_in)/(a/NVP_90_straight))-Airtable_NVPS_Join_Straight$d)
+
+
+#converts output above into feet 
+Airtable_NVPS_Join_Straight <- Airtable_NVPS_Join_Straight %>% mutate(dist_wheelchair_ft = dist_wheelchair_in/12) 
+
+
+```
+
+
+```{r Distance to Adult, message=FALSE, warning=FALSE}
+
+# To calculate the distance to the VRU from the front of the cab we make a similar triangle  calculation. 
+
+#Variables: height of VRU, a (drivers eye point to ground), d (driver to front of the cab), NVP directly in front of the driver. 
+
+#First, we subtract a from VRU Height (this produces the opposite side of the small triangle). Then, we divide the product by a/NVP (this produces the adjacent side of the small triangle). Lastly, we subtract d because we are interested in the distance from the car to the VRU 
+
+Airtable_NVPS_Join_Straight <- Airtable_NVPS_Join_Straight %>% mutate(dist_adult_in = ((a-VRU_Adult_Height_in)/(a/NVP_90_straight))-Airtable_NVPS_Join_Straight$d)
+
+
+#converts output above into feet 
+Airtable_NVPS_Join_Straight <- Airtable_NVPS_Join_Straight %>% mutate(dist_adult_ft = dist_adult_in/12) 
+
+
+```
+
+# Micromobility Lane Calculations 
+```{r Distance to Grade School Biker, message=FALSE, warning=FALSE}
+
+
+# To calculate the distance to the VRU from the side of the cab we make a similar triangle  calculation. 
+
+#Variables: height of VRU, a (drivers eye point to ground), b (driver to passenger), NVP directly to the right side of the driver. 
+
+#First, we subtract a from VRU Height (this produces the opposite side of the small triangle). Then, we divide the product by a/NVP (this produces the adjacent side of the small triangle). Lastly, we subtract b because we are interested in the distance from the car to the VRU 
+
+Airtable_NVPS_Join_Passenger <- Airtable_NVPS_Join_Passenger %>% mutate(dist_child_biker_in = ((a-VRU_GradeSchoolChild_Biker_Height_in)/(a/NVP_0_passenger))-Airtable_NVPS_Join_Passenger$b)
+
+
+#Converts calculation above into feet 
+Airtable_NVPS_Join_Passenger <- Airtable_NVPS_Join_Passenger %>% mutate(dist_child_biker_ft = dist_child_biker_in/12) 
+
+
+```
+
+
+```{r Distance to Adult Biker, message=FALSE, warning=FALSE}
+
+# To calculate the distance to the VRU from the front of the cab we make a similar triangle  calculation. 
+
+#Variables: height of VRU, a (drivers eye point to ground), b (driver to passenger), NVP directly in front of the driver. 
+
+#First, we subtract a from VRU Height (this produces the opposite side of the small triangle). Then, we divide the product by a/NVP (this produces the adjacent side of the small triangle). Lastly, we subtract b because we are interested in the distance from the car to the VRU 
+
+Airtable_NVPS_Join_Passenger <- Airtable_NVPS_Join_Passenger %>% mutate(dist_adult_biker_in = ((a-VRU_Adult_Biker_Height_in)/(a/NVP_0_passenger))-Airtable_NVPS_Join_Passenger$b)
+
+
+#Converts calculation above into feet 
+Airtable_NVPS_Join_Passenger <- Airtable_NVPS_Join_Passenger %>% mutate(dist_adult_biker_ft = dist_adult_biker_in/12) 
+
+```
+
+```{r Distance to Adult Scooter, message=FALSE, warning=FALSE}
+
+# To calculate the distance to the VRU from the front of the cab we make a similar triangle  calculation. 
+
+#Variables: height of VRU, a (drivers eye point to ground), b (driver to passenger), NVP directly in front of the driver. 
+
+#First, we subtract a from VRU Height (this produces the opposite side of the small triangle). Then, we divide the product by a/NVP (this produces the adjacent side of the small triangle). Lastly, we subtract b because we are interested in the distance from the car to the VRU 
+
+Airtable_NVPS_Join_Passenger <- Airtable_NVPS_Join_Passenger %>% mutate(dist_adult_scooter_in = ((a-VRU_Adult_Scooter_Height_in)/(a/NVP_0_passenger))-Airtable_NVPS_Join_Passenger$b)
+
+
+#Converts calculation above into feet 
+Airtable_NVPS_Join_Passenger <- Airtable_NVPS_Join_Passenger %>% mutate(dist_adult_scooter_ft = dist_adult_scooter_in/12) 
+
+```
+
+
+#Bubble Plot
+#ggplot(data, aes(x=gdpPercap, y=lifeExp, size = pop)) + geom_point(alpha=0.7)
+
+# Creating & Exporting Data Sets 
+
+
+```{r Create Datasets, message=FALSE, warning=FALSE}
+
+
+#Straight (Front) Visibility
+
+
+#  visibility class 8 Trucks Data set 
+straight_trucks_class8 <- Airtable_NVPS_Join_Straight %>% filter(`Body.Class` == "Truck" & `Weight.Class` == "Class 8")
+
+#  visibility all trucks less than class 8                                               
+staight_trucks_class3_7 <- Airtable_NVPS_Join_Straight %>% filter(`Body.Class` == "Truck" & `Weight.Class` < "Class 8")
+
+# visibility school buses data set 
+straight_schoolbus <- Airtable_NVPS_Join_Straight %>% filter(`Body.Class` == "Bus")  
+
+
+#Passenger (side) Visibility 
+
+
+#  visibility class 8 Trucks Data set 
+passenger_trucks_class8 <- Airtable_NVPS_Join_Passenger %>% filter(`Body.Class` == "Truck" & `Weight.Class` == "Class 8")
+
+#  visibility all trucks less than class 8                                               
+passenger_trucks_class3_7 <- Airtable_NVPS_Join_Passenger %>% filter(`Body.Class` == "Truck" & `Weight.Class` < "Class 8")
+
+# visibility school buses data set 
+passenger_schoolbus <- Airtable_NVPS_Join_Passenger %>% filter(`Body.Class` == "Bus")  
+
+                      
+```
+
+
+```{r Exporting Datasets, message=FALSE, warning=FALSE}
+
+
+#Straight (Front) Visibility
+
+
+write_csv(straight_trucks_class8, "./straight_trucks_class8.csv")
+
+write_csv(staight_trucks_class3_7, "./staight_trucks_class3_7.csv")
+
+write_csv(straight_schoolbus, "./straight_schoolbus.csv")
+
+
+#Passenger (side) Visibility 
+
+
+write_csv(passenger_trucks_class8, "./passenger_trucks_class8.csv")
+
+write_csv(passenger_trucks_class3_7, "./passenger_trucks_class3_7.csv")
+
+write_csv(passenger_schoolbus, "./passenger_schoolbus.csv")
+
+
+
+```
+
+
+
+
+
